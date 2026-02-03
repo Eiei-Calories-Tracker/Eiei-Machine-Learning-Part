@@ -18,7 +18,7 @@ git clone ...
 
 - Install (Ensure it's installed)
 
-- **Only First Time**
+- **Only First Time You clone project**
 
 ```
 python -m venv .venv
@@ -35,7 +35,7 @@ dotenv -e ./secrets/.env run dvc pull
 
 # How to initalize in case add new dvc
 
-- **Only First Time**
+- **Only First Time of Initialize**
 
 ```
 dvc init
@@ -55,7 +55,7 @@ git add .
 git commit -m "track datasets"
 ```
 
-- Google Drive folder **Only First Time** copy the url (stil bug) https://drive.google.com/drive/folders/XXXXXXXX
+- Google Drive folder **Only First Time of Initialize** copy the url (stil bug) https://drive.google.com/drive/folders/XXXXXXXX
 
 ```
 dvc remote add -d gdrive gdrive://FOLDER_ID
@@ -63,7 +63,7 @@ dvc remote modify gdrive gdrive_use_service_account true
 dvc remote modify gdrive gdrive_service_account_json_file_path secrets/XXX.json
 ```
 
-- S3 bucket **Only First Time** copy the url
+- S3 bucket **Only First Time of Initialize** copy the url
 
 ```
 dvc remote add -d s3remote s3://bucketname/dvcstore
