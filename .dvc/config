@@ -1,0 +1,7 @@
+[core]
+    remote = s3remote
+['remote "gdrive"']
+    url = gdrive://1pUlAQKW_lqJkX8ky2VsbrTCQ_SkWe7bf
+    gdrive_service_account_json_file_path = ../secrets/datasetsaveindrive-ad7f3772b398.json
+['remote "s3remote"']
+    url = s3://eiei-calories-bucket-01/dvcstore
