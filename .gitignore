@@ -3,3 +3,5 @@ secrets/*.json
 data/test*/
 data/v*/
 .env
+venv
+/mockData
