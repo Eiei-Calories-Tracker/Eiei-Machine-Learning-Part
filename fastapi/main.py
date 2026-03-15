@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import os
 import mlflow.pytorch
+import traceback
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import RedirectResponse
 import uvicorn
@@ -45,6 +46,7 @@ def load_model():
         print(f"Model loaded successfully from MLflow on {device}")
     except Exception as e:
         print(f"Could not load model from MLflow: {e}")
+        traceback.print_exc()
         # Fallback to local file if available (for initial startup test)
         local_path = "best_googlenet_thai_food.pth"
         if os.path.exists(local_path):
