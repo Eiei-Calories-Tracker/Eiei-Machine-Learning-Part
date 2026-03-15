@@ -5,3 +5,8 @@ data/v*/
 .env
 *venv
 *mockData
+**/logs
+**logs
+**/mlflow_artifacts
+**/__pycache__
+**/postgres_data
