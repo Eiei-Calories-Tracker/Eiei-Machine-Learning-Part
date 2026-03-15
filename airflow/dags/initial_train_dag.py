@@ -27,17 +27,13 @@ dag = DAG(
 def register_and_promote_model_func(**context):
     client = MlflowClient()
     model_name = "googlenet-thai-food"
+    ti = context['ti']
     
-    # Get the latest run from experiment
-    experiment = client.get_experiment_by_name("ThaiFood_Initial")
-    if not experiment:
-        raise Exception("Experiment 'ThaiFood_Initial' not found.")
-    runs = client.search_runs(experiment_ids=[experiment.experiment_id], order_by=["attributes.start_time DESC"], max_results=1)
-    
-    if not runs:
-        raise Exception("No runs found to register.")
+    # Get the run_id from the training task using XCom
+    latest_run_id = ti.xcom_pull(task_ids='train_v1', key='return_value')
+    if not latest_run_id:
+        raise Exception("Run ID not found in XCom from 'train_v1'.")
         
-    latest_run_id = runs[0].info.run_id
     model_uri = f"runs:/{latest_run_id}/model"
     
     # Check if model artifact exists in MLflow, if not, try to log it from local fallback

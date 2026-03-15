@@ -20,10 +20,17 @@ dag = DAG(
 )
 
 def manual_register_func(**context):
-    # Try to get run_id from configuration
-    run_id = '1227aa489b1c4eee8cf5cbb73ec9d4a6'
+    # Try to get run_id from configuration (Trigger DAG w/ config)
+    dag_run = context.get('dag_run')
+    run_id = None
+    if dag_run and dag_run.conf:
+        run_id = dag_run.conf.get('run_id')
+    
+    # Fallback to a default if you want, but better to require it
     if not run_id:
-        raise Exception("Please provide 'run_id' in DAG configuration. Example: {\"run_id\": \"your-run-id-here\"}")
+        # For backward compatibility with your last successful run if you just hit 'Trigger'
+        run_id = 'ba3e618906d04263a1bd083811b66a0f'
+        print(f"No run_id provided in config, falling back to: {run_id}")
     
     client = MlflowClient()
     model_name = "googlenet-thai-food"
