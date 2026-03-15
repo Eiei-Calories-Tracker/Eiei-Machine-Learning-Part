@@ -61,6 +61,14 @@ def load_model():
             except Exception as le:
                 print(f"Error loading local model: {le}")
 
+@app.post("/reload")
+def reload_model_endpoint():
+    try:
+        load_model()
+        return {"message": "Model reloaded successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/")
 def read_root():
     return RedirectResponse(url="/docs")

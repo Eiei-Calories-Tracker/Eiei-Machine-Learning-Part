@@ -65,7 +65,8 @@ def run_training(model, train_loader, val_loader, epochs, lr, device, experiment
     mlflow.autolog(disable=True)
     mlflow.set_experiment(experiment_name)
     
-    with mlflow.start_run(run_name=run_name):
+    with mlflow.start_run(run_name=run_name) as run:
+        run_id = run.info.run_id
         model = model.to(device)
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
@@ -110,4 +111,4 @@ def run_training(model, train_loader, val_loader, epochs, lr, device, experiment
                 except Exception as e:
                     print(f"Warning: MLflow model logging failed (Permission/API issue), but training continues: {e}")
                 
-        return model, best_acc
+        return model, best_acc, run_id
