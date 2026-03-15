@@ -21,7 +21,7 @@ dag = DAG(
 
 def manual_register_func(**context):
     # Try to get run_id from configuration
-    run_id = '2ac580423b3d4d8c8a5f7e383f03e8f7'
+    run_id = '1227aa489b1c4eee8cf5cbb73ec9d4a6'
     if not run_id:
         raise Exception("Please provide 'run_id' in DAG configuration. Example: {\"run_id\": \"your-run-id-here\"}")
     

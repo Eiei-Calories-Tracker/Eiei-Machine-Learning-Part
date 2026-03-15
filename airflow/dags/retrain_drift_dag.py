@@ -8,6 +8,7 @@ from src.data_utils import prepare_new_version_data, get_latest_version
 from src.main_train import run_training_task
 from src.main_eval import run_eval_task
 from src.drift_check_main import run_drift_check_task
+import requests
 
 default_args = {
     'owner': 'admin',
@@ -64,12 +65,7 @@ def compare_and_promote_func(**context):
         prev_acc = 0
         
     if new_acc >= prev_acc:
-        # Get latest run (the one we just did)
-        experiment = client.get_experiment_by_name("ThaiFood_Initial")
-        if not experiment:
-            experiment = client.get_experiment_by_name("ThaiFoodClassification")
-        runs = client.search_runs(experiment_ids=[experiment.experiment_id], order_by=["attributes.start_time DESC"], max_results=1)
-        latest_run_id = runs[0].info.run_id
+        latest_run_id = ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value")
         
         result = mlflow.register_model(f"runs:/{latest_run_id}/model", model_name)
         client.transition_model_version_stage(model_name, result.version, "Production", archive_existing_versions=True)
@@ -123,7 +119,7 @@ eval_task = PythonOperator(
     python_callable=run_eval_task,
     op_kwargs={
         'data_dir': '/opt/airflow/data/test',
-        'model_uri': 'models:/googlenet-thai-food/latest',
+        'model_uri': 'runs:/{{ ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value") }}/model',
         'experiment_name': 'ThaiFood_Initial'
     },
     dag=dag,
@@ -135,5 +131,19 @@ compare_promote_task = PythonOperator(
     dag=dag,
 )
 
+def reload_fastapi_func():
+    try:
+        response = requests.post("http://fastapi:7860/reload")
+        response.raise_for_status()
+        print("FastAPI model reload triggered successfully.")
+    except Exception as e:
+        print(f"Failed to trigger FastAPI reload: {e}")
+
+reload_task = PythonOperator(
+    task_id='reload_fastapi',
+    python_callable=reload_fastapi_func,
+    dag=dag,
+)
+
 drift_check_task >> branch_task >> [no_drift_task, prepare_data_task]
-prepare_data_task >> train_task >> eval_task >> compare_promote_task
+prepare_data_task >> train_task >> eval_task >> compare_promote_task >> reload_task

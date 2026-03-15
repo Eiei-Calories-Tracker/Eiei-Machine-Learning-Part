@@ -19,7 +19,7 @@ def run_training_task(data_dir, epochs=1, lr=0.0005, batch_size=64, experiment_n
     
     train_loader, val_loader = get_dataloaders(data_dir, batch_size=batch_size)
     
-    trained_model, best_acc = run_training(
+    trained_model, best_acc, run_id = run_training(
         model, 
         train_loader, 
         val_loader, 
@@ -30,8 +30,8 @@ def run_training_task(data_dir, epochs=1, lr=0.0005, batch_size=64, experiment_n
         run_name=run_name
     )
     
-    print(f"Training finished. Best Val Acc: {best_acc:.4f}")
-    return best_acc
+    print(f"Training finished. Best Val Acc: {best_acc:.4f}, Run ID: {run_id}")
+    return run_id
 
 def main():
     parser = argparse.ArgumentParser()

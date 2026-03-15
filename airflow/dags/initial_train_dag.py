@@ -6,6 +6,7 @@ import mlflow
 from mlflow.tracking import MlflowClient
 from src.main_train import run_training_task
 from src.main_eval import run_eval_task
+import requests
 
 default_args = {
     'owner': 'admin',
@@ -86,7 +87,7 @@ eval_task = PythonOperator(
     python_callable=run_eval_task,
     op_kwargs={
         'data_dir': '/opt/airflow/data/v1',
-        'model_uri': 'models:/googlenet-thai-food/latest',
+        'model_uri': 'runs:/{{ ti.xcom_pull(task_ids="train_v1", key="return_value") }}/model', 
         'experiment_name': 'ThaiFood_Initial'
     },
     dag=dag,
@@ -103,4 +104,18 @@ register_promote_task = PythonOperator(
 # but for "Test Flow" we assume it polls or is restarted manually.
 # In a real setup, we'd use a signal or an API call to tell FastAPI to reload.
 
-train_task >> register_promote_task >> eval_task
+def reload_fastapi_func():
+    try:
+        response = requests.post("http://fastapi:7860/reload")
+        response.raise_for_status()
+        print("FastAPI model reload triggered successfully.")
+    except Exception as e:
+        print(f"Failed to trigger FastAPI reload: {e}")
+
+reload_task = PythonOperator(
+    task_id='reload_fastapi',
+    python_callable=reload_fastapi_func,
+    dag=dag,
+)
+
+train_task >> eval_task >> register_promote_task >> reload_task
