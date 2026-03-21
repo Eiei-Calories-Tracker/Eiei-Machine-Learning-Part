@@ -75,6 +75,12 @@ def reload_model_endpoint():
 def read_root():
     return RedirectResponse(url="/docs")
 
+@app.get("/health")
+def health():
+    if model is None:
+        raise HTTPException(status_code=503, detail={"status": "degraded", "model_loaded": False})
+    return {"status": "ok", "model_loaded": True}
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     if model is None:

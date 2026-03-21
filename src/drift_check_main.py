@@ -29,9 +29,6 @@ def run_drift_check_task(base_data_dir, mock_data_dir, **kwargs):
         is_drift, p_val = check_drift(ref_images[:100], test_images[:100], device)
         print(f"Drift check result: is_drift={is_drift}, p_val={p_val}")
 
-    with open("drift_result.txt", "w") as f:
-        f.write("drift" if is_drift else "no_drift")
-    
     return is_drift
 
 def main():

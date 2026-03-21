@@ -1,12 +1,16 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.empty import EmptyOperator
 from datetime import datetime, timedelta
 import os
+import subprocess
+import time
 import mlflow
 from mlflow.tracking import MlflowClient
-from src.data_utils import prepare_new_version_data, get_latest_version
+import docker
+from src.data_utils import prepare_new_version_from_latest_with_reservoir, get_latest_version
 from src.main_train import run_training_task
-from src.main_eval import run_eval_task
+from src.main_eval import evaluate_model_uri
 from src.drift_check_main import run_drift_check_task
 import requests
 
@@ -26,52 +30,135 @@ dag = DAG(
     catchup=False,
 )
 
-def check_drift_branch_func():
-    if os.path.exists("drift_result.txt"):
-        with open("drift_result.txt", "r") as f:
-            result = f.read().strip()
-        if result == "drift":
-            return "prepare_new_data"
+def _resolve_latest_test_data_dir(base_data_dir="/opt/airflow/data"):
+    latest_version = get_latest_version(base_data_dir)
+    if latest_version:
+        return f"{base_data_dir}/{latest_version}"
+    return f"{base_data_dir}/v1"
+
+
+def check_drift_branch_func(**context):
+    ti = context['ti']
+    is_drift = ti.xcom_pull(task_ids='check_drift', key='return_value')
+    if bool(is_drift):
+        return "prepare_new_data"
     return "no_drift_detected"
 
 def prepare_data_func(**context):
     base_dir = "/opt/airflow/data"
-    mock_dir = "/opt/airflow/mockData"
-    
+    tracking_uri = "http://mlflow:5000"
+    mlflow.set_tracking_uri(tracking_uri)
+
     latest_v = get_latest_version(base_dir)
     v_num = int(latest_v[1:]) if latest_v else 0
     new_v = f"v{v_num + 1}"
-    
-    new_path = prepare_new_version_data(mock_dir, base_dir, new_v)
+
+    prepare_summary = prepare_new_version_from_latest_with_reservoir(
+        base_data_dir=base_dir,
+        target_version=new_v,
+        sample_ratio=0.7,
+        train_ratio=0.8,
+        val_ratio=0.1,
+        seed=42,
+    )
+
+    subprocess.run(["dvc", "add", f"data/{new_v}"], cwd="/opt/airflow", check=True)
+    subprocess.run(["dvc", "push", "-r", "s3remote"], cwd="/opt/airflow", check=True)
+
     context['ti'].xcom_push(key='new_version', value=new_v)
-    return new_path
+    context['ti'].xcom_push(key='prepare_summary', value=prepare_summary)
+    return prepare_summary['new_data_dir']
+
+
+def train_new_version_func(**context):
+    ti = context['ti']
+    new_version = ti.xcom_pull(task_ids='prepare_new_data', key='new_version')
+    if not new_version:
+        raise ValueError("Missing new_version from prepare_new_data")
+
+    run_id = run_training_task(
+        data_dir=f"/opt/airflow/data/{new_version}",
+        epochs=1,
+        experiment_name='ThaiFood_Initial',
+        run_name=f'retrain_{new_version}',
+        base_model_uri='models:/googlenet-thai-food/Production',
+        tracking_uri='http://mlflow:5000',
+    )
+    return run_id
+
+
+def evaluate_candidate_func(**context):
+    ti = context['ti']
+    mlflow.set_tracking_uri("http://mlflow:5000")
+
+    run_id = ti.xcom_pull(task_ids='fine_tune_new_version', key='return_value')
+    if not run_id:
+        raise ValueError("Missing run_id from fine_tune_new_version")
+
+    data_dir = _resolve_latest_test_data_dir()
+    candidate_uri = f"runs:/{run_id}/model"
+    _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+    ti.xcom_push(key='candidate_acc', value=float(candidate_acc))
+    return float(candidate_acc)
 
 def compare_and_promote_func(**context):
     ti = context['ti']
-    new_acc = float(open("eval_acc.txt").read().strip())
+    mlflow.set_tracking_uri("http://mlflow:5000")
+
+    new_acc = float(ti.xcom_pull(task_ids='evaluate_new_version', key='candidate_acc'))
     
     client = MlflowClient()
     model_name = "googlenet-thai-food"
-    
-    # Get current Production accuracy if possible
+    data_dir = _resolve_latest_test_data_dir()
+
+    prev_acc = None
+    should_promote = True
     try:
-        prod_version = client.get_latest_versions(model_name, stages=["Production"])[0]
-        # In a real setup, we'd store accuracy in model tags/metadata
-        # For this test, we assume if we reached this task, the new one might be better or we just promote it.
-        # Let's just compare against a fixed threshold or the previous run's metric
-        prev_run_id = prod_version.run_id
-        prev_acc = client.get_run(prev_run_id).data.metrics.get("val_acc", 0)
-    except:
-        prev_acc = 0
-        
-    if new_acc >= prev_acc:
-        latest_run_id = ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value")
-        
-        result = mlflow.register_model(f"runs:/{latest_run_id}/model", model_name)
-        client.transition_model_version_stage(model_name, result.version, "Production", archive_existing_versions=True)
-        print(f"New model version {result.version} promoted to Production (Acc: {new_acc} >= {prev_acc})")
-    else:
-        print(f"New model (Acc: {new_acc}) not better than Production (Acc: {prev_acc}).")
+        prod_versions = client.get_latest_versions(model_name, stages=["Production"])
+        if prod_versions:
+            _, prev_acc = evaluate_model_uri(data_dir=data_dir, model_uri=f"models:/{model_name}/Production", split='test')
+            should_promote = new_acc >= prev_acc
+    except Exception as error:
+        print(f"No active Production baseline for comparison: {error}")
+
+    if not should_promote:
+        print(f"New model not promoted: candidate_acc={new_acc:.4f} < production_acc={prev_acc:.4f}")
+        ti.xcom_push(key='promoted', value=False)
+        return False
+
+    latest_run_id = ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value")
+    result = mlflow.register_model(f"runs:/{latest_run_id}/model", model_name)
+    client.transition_model_version_stage(model_name, result.version, "Production", archive_existing_versions=True)
+    print(f"New model version {result.version} promoted to Production")
+    ti.xcom_push(key='promoted', value=True)
+    return True
+
+
+def restart_fastapi_container_func(**context):
+    ti = context['ti']
+    promoted = ti.xcom_pull(task_ids='compare_and_promote', key='promoted')
+    if not promoted:
+        print("No promotion occurred. Skipping FastAPI restart.")
+        return "skipped"
+
+    docker_client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+    container = docker_client.containers.get("fastapi")
+    container.restart(timeout=20)
+    print("FastAPI container restarted.")
+
+    health_url = "http://fastapi:7860/health"
+    last_error = None
+    for _ in range(30):
+        try:
+            response = requests.get(health_url, timeout=3)
+            if response.status_code == 200:
+                print("FastAPI health check passed.")
+                return "restarted"
+        except Exception as error:
+            last_error = error
+        time.sleep(2)
+
+    raise RuntimeError(f"FastAPI did not become healthy after restart. Last error: {last_error}")
 
 drift_check_task = PythonOperator(
     task_id='check_drift',
@@ -89,9 +176,8 @@ branch_task = BranchPythonOperator(
     dag=dag,
 )
 
-no_drift_task = PythonOperator(
+no_drift_task = EmptyOperator(
     task_id='no_drift_detected',
-    python_callable=lambda: print("No drift detected, stopping pipeline."),
     dag=dag,
 )
 
@@ -103,25 +189,13 @@ prepare_data_task = PythonOperator(
 
 train_task = PythonOperator(
     task_id='fine_tune_new_version',
-    python_callable=run_training_task,
-    op_kwargs={
-        'data_dir': '/opt/airflow/data/{{ ti.xcom_pull(task_ids="prepare_new_data", key="new_version") }}',
-        'epochs': 1,
-        'experiment_name': 'ThaiFood_Initial',
-        'run_name': 'retrain_{{ ti.xcom_pull(task_ids="prepare_new_data", key="new_version") }}',
-        'base_model_uri': 'models:/googlenet-thai-food/Production'
-    },
+    python_callable=train_new_version_func,
     dag=dag,
 )
 
 eval_task = PythonOperator(
     task_id='evaluate_new_version',
-    python_callable=run_eval_task,
-    op_kwargs={
-        'data_dir': '/opt/airflow/data/test',
-        'model_uri': 'runs:/{{ ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value") }}/model',
-        'experiment_name': 'ThaiFood_Initial'
-    },
+    python_callable=evaluate_candidate_func,
     dag=dag,
 )
 
@@ -131,17 +205,9 @@ compare_promote_task = PythonOperator(
     dag=dag,
 )
 
-def reload_fastapi_func():
-    try:
-        response = requests.post("http://fastapi:7860/reload")
-        response.raise_for_status()
-        print("FastAPI model reload triggered successfully.")
-    except Exception as e:
-        print(f"Failed to trigger FastAPI reload: {e}")
-
 reload_task = PythonOperator(
-    task_id='reload_fastapi',
-    python_callable=reload_fastapi_func,
+    task_id='restart_fastapi',
+    python_callable=restart_fastapi_container_func,
     dag=dag,
 )
 

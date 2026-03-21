@@ -8,3 +8,5 @@ Pillow
 psycopg2-binary
 scikit-learn
 requests
+dvc[s3]
+docker

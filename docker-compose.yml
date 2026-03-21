@@ -1,6 +1,8 @@
 
 x-airflow-common: &airflow-common
   build: ./airflow
+  env_file:
+    - ./secrets/.env
   environment:
     - AIRFLOW__CORE__EXECUTOR=LocalExecutor
     - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -10,10 +12,13 @@ x-airflow-common: &airflow-common
     - AIRFLOW__WEBSERVER__SECRET_KEY='tKtdEpwrhaEQ97ePEfVVbg'
     - PYTHONPATH=/opt/airflow
   volumes:
+    - ./.git:/opt/airflow/.git
     - ./airflow/dags:/opt/airflow/dags
     - ./src:/opt/airflow/src
     - ./data:/opt/airflow/data
     - ./mockData:/opt/airflow/mockData
+    - ./.dvc:/opt/airflow/.dvc
+    - /var/run/docker.sock:/var/run/docker.sock
     - ./airflow/mlflow_artifacts:/mlruns
     - ./airflow/logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
@@ -52,7 +57,7 @@ services:
       --port 5000
       --serve-artifacts
     ports:
-      - "5000:5000"
+      - "5001:5000"
     depends_on:
       postgres:
         condition: service_healthy

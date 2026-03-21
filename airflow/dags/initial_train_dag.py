@@ -1,12 +1,15 @@
 from airflow import DAG
-from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+import time
 import os
+import requests
 import mlflow
 from mlflow.tracking import MlflowClient
+import docker
+from src.data_utils import get_latest_version, prepare_new_version_data
 from src.main_train import run_training_task
-from src.main_eval import run_eval_task
-import requests
+from src.main_eval import evaluate_model_uri
 
 default_args = {
     'owner': 'admin',
@@ -24,47 +27,129 @@ dag = DAG(
     catchup=False,
 )
 
-def register_and_promote_model_func(**context):
+def _resolve_latest_test_data_dir(base_data_dir="/opt/airflow/data"):
+    latest_version = get_latest_version(base_data_dir)
+    if latest_version:
+        latest_test_dir = f"{base_data_dir}/{latest_version}"
+        return latest_test_dir
+    return f"{base_data_dir}/v1"
+
+
+def preprocess_v1_func():
+    target_dir = "/opt/airflow/data/v1"
+    train_dir = f"{target_dir}/train"
+    val_dir = f"{target_dir}/val"
+
+    has_train = os.path.isdir(train_dir) and any(os.scandir(train_dir))
+    has_val = os.path.isdir(val_dir) and any(os.scandir(val_dir))
+    if has_train and has_val:
+        print("data/v1 already prepared. Skipping preprocess.")
+        return target_dir
+
+    print("Preparing data/v1 from /opt/airflow/mockData ...")
+    prepared_dir = prepare_new_version_data(
+        mock_data_dir="/opt/airflow/mockData",
+        base_data_dir="/opt/airflow/data",
+        target_version="v1",
+    )
+    print(f"Prepared dataset at {prepared_dir}")
+    return prepared_dir
+
+
+def evaluate_candidate_func(**context):
+    ti = context['ti']
+    tracking_uri = "http://mlflow:5000"
+    mlflow.set_tracking_uri(tracking_uri)
+
+    run_id = ti.xcom_pull(task_ids='train_v1', key='return_value')
+    if not run_id:
+        raise ValueError("Missing run_id from train_v1")
+
+    data_dir = _resolve_latest_test_data_dir()
+    candidate_uri = f"runs:/{run_id}/model"
+    _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+
+    ti.xcom_push(key='candidate_acc', value=float(candidate_acc))
+    return float(candidate_acc)
+
+
+def compare_and_promote_model_func(**context):
+    ti = context['ti']
+    tracking_uri = "http://mlflow:5000"
+    mlflow.set_tracking_uri(tracking_uri)
+
     client = MlflowClient()
     model_name = "googlenet-thai-food"
-    ti = context['ti']
-    
-    # Get the run_id from the training task using XCom
-    latest_run_id = ti.xcom_pull(task_ids='train_v1', key='return_value')
-    if not latest_run_id:
-        raise Exception("Run ID not found in XCom from 'train_v1'.")
-        
-    model_uri = f"runs:/{latest_run_id}/model"
-    
-    # Check if model artifact exists in MLflow, if not, try to log it from local fallback
-    local_fallback = "/opt/airflow/src/best_model_local.pth"
-    if os.path.exists(local_fallback):
-        print(f"Checking for artifacts in run {latest_run_id}...")
-        artifacts = client.list_artifacts(latest_run_id)
-        if not any(a.path == "model" for a in artifacts):
-            print("Model artifact missing in MLflow. Attempting manual upload from local fallback...")
-            import torch
-            from src.model import create_model
-            # Reconstruct model and load state_dict
-            checkpoint = torch.load(local_fallback)
-            model = create_model(num_classes=checkpoint['num_classes'])
-            model.load_state_dict(checkpoint['model_state_dict'])
-            with mlflow.start_run(run_id=latest_run_id):
-                mlflow.pytorch.log_model(model, "model")
-            print("Manual upload successful.")
+    run_id = ti.xcom_pull(task_ids='train_v1', key='return_value')
+    candidate_acc = float(ti.xcom_pull(task_ids='evaluate_candidate', key='candidate_acc'))
+    if not run_id:
+        raise ValueError("Missing run_id from train_v1")
 
-    # Register model
-    result = mlflow.register_model(model_uri, model_name)
-    version = result.version
-    
-    # Promote to Production
+    data_dir = _resolve_latest_test_data_dir()
+    production_acc = None
+    should_promote = True
+
+    try:
+        prod_versions = client.get_latest_versions(model_name, stages=["Production"])
+        if prod_versions:
+            production_uri = f"models:/{model_name}/Production"
+            _, production_acc = evaluate_model_uri(data_dir=data_dir, model_uri=production_uri, split='test')
+            should_promote = candidate_acc >= production_acc
+    except Exception as error:
+        print(f"No active Production baseline for comparison: {error}")
+
+    if not should_promote:
+        print(f"Skip promotion. Candidate acc={candidate_acc:.4f} < Production acc={production_acc:.4f}")
+        ti.xcom_push(key='promoted', value=False)
+        return False
+
+    result = mlflow.register_model(f"runs:/{run_id}/model", model_name)
     client.transition_model_version_stage(
         name=model_name,
-        version=version,
+        version=result.version,
         stage="Production",
-        archive_existing_versions=True
+        archive_existing_versions=True,
     )
-    print(f"Model version {version} promoted to Production.")
+
+    print(
+        f"Promoted model version {result.version} with candidate acc={candidate_acc:.4f}"
+        + (f" vs Production acc={production_acc:.4f}" if production_acc is not None else " (no prior Production)")
+    )
+    ti.xcom_push(key='promoted', value=True)
+    return True
+
+
+def restart_fastapi_container_func(**context):
+    ti = context['ti']
+    promoted = ti.xcom_pull(task_ids='compare_and_promote', key='promoted')
+    if not promoted:
+        print("No promotion occurred. Skipping FastAPI restart.")
+        return "skipped"
+
+    docker_client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+    container = docker_client.containers.get("fastapi")
+    container.restart(timeout=20)
+    print("FastAPI container restarted.")
+
+    health_url = "http://fastapi:7860/health"
+    last_error = None
+    for _ in range(30):
+        try:
+            response = requests.get(health_url, timeout=3)
+            if response.status_code == 200:
+                print("FastAPI health check passed.")
+                return "restarted"
+        except Exception as error:
+            last_error = error
+        time.sleep(2)
+
+    raise RuntimeError(f"FastAPI did not become healthy after restart. Last error: {last_error}")
+
+preprocess_task = PythonOperator(
+    task_id='preprocess_v1',
+    python_callable=preprocess_v1_func,
+    dag=dag,
+)
 
 train_task = PythonOperator(
     task_id='train_v1',
@@ -73,45 +158,28 @@ train_task = PythonOperator(
         'data_dir': '/opt/airflow/data/v1',
         'epochs': 1,
         'experiment_name': 'ThaiFood_Initial',
-        'run_name': 'initial_v1_run'
+        'run_name': 'initial_v1_run',
+        'tracking_uri': 'http://mlflow:5000',
     },
     dag=dag,
 )
 
-eval_task = PythonOperator(
-    task_id='evaluate_v1',
-    python_callable=run_eval_task,
-    op_kwargs={
-        'data_dir': '/opt/airflow/data/v1',
-        'model_uri': 'runs:/{{ ti.xcom_pull(task_ids="train_v1", key="return_value") }}/model', 
-        'experiment_name': 'ThaiFood_Initial'
-    },
+evaluate_candidate_task = PythonOperator(
+    task_id='evaluate_candidate',
+    python_callable=evaluate_candidate_func,
     dag=dag,
 )
 
-register_promote_task = PythonOperator(
-    task_id='register_and_promote',
-    python_callable=register_and_promote_model_func,
+compare_promote_task = PythonOperator(
+    task_id='compare_and_promote',
+    python_callable=compare_and_promote_model_func,
     dag=dag,
 )
 
-# FastAPI update task (just a placeholder since FastAPI container loads from Production stage on startup/restart)
-# We could trigger a restart of the fastapi container here if needed via docker socket, 
-# but for "Test Flow" we assume it polls or is restarted manually.
-# In a real setup, we'd use a signal or an API call to tell FastAPI to reload.
-
-def reload_fastapi_func():
-    try:
-        response = requests.post("http://fastapi:7860/reload")
-        response.raise_for_status()
-        print("FastAPI model reload triggered successfully.")
-    except Exception as e:
-        print(f"Failed to trigger FastAPI reload: {e}")
-
-reload_task = PythonOperator(
-    task_id='reload_fastapi',
-    python_callable=reload_fastapi_func,
+restart_fastapi_task = PythonOperator(
+    task_id='restart_fastapi',
+    python_callable=restart_fastapi_container_func,
     dag=dag,
 )
 
-train_task >> eval_task >> register_promote_task >> reload_task
+preprocess_task >> train_task >> evaluate_candidate_task >> compare_promote_task >> restart_fastapi_task
