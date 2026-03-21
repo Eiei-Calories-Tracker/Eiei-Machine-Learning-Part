@@ -81,7 +81,7 @@ flowchart TD
 
 - ถ้า `prepare_new_data` ล้มที่ `dvc add` ให้เช็กว่า Airflow มองเห็น `.git` ใน `/opt/airflow`
 - ถ้า `prepare_new_data` ล้มที่ `dvc push` ให้เช็ก AWS credentials ใน `secrets/.env`
-- MLflow UI ของเครื่องนี้เปิดที่ `http://localhost:5001` (host port map เป็น `5001:5000`)
+- MLflow UI ของเครื่องนี้เปิดที่ `http://localhost:5000` (host port map เป็น `5000:5000`)
 
 # When add new data set
 

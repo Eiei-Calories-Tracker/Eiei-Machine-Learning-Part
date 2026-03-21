@@ -24,7 +24,7 @@ def get_transforms():
     ])
     return train_transform, val_transform
 
-def get_dataloaders(data_dir, batch_size=64):
+def get_dataloaders(data_dir, batch_size=16):
     train_dir = os.path.join(data_dir, 'train')
     val_dir = os.path.join(data_dir, 'val')
     

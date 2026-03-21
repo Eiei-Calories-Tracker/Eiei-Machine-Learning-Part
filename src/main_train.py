@@ -6,7 +6,7 @@ from src.model import create_model
 from src.data_utils import get_dataloaders
 from src.train_engine import run_training
 
-def run_training_task(data_dir, epochs=1, lr=0.0005, batch_size=64, experiment_name="ThaiFoodClassification", run_name="train_run", base_model_uri=None, tracking_uri=None, **kwargs):
+def run_training_task(data_dir, epochs=1, lr=0.0005, batch_size=16, experiment_name="ThaiFoodClassification", run_name="train_run", base_model_uri=None, tracking_uri=None, **kwargs):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     resolved_tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")

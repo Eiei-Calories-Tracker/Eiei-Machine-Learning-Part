@@ -83,6 +83,7 @@ def train_new_version_func(**context):
         run_name=f'retrain_{new_version}',
         base_model_uri='models:/googlenet-thai-food/Production',
         tracking_uri='http://mlflow:5000',
+        batch_size=16,
     )
     return run_id
 

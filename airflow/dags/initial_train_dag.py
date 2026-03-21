@@ -155,6 +155,7 @@ train_task = PythonOperator(
     task_id='train_v1',
     python_callable=run_training_task,
     op_kwargs={
+        'batch_size': 16,
         'data_dir': '/opt/airflow/data/v1',
         'epochs': 1,
         'experiment_name': 'ThaiFood_Initial',

@@ -47,6 +47,7 @@ services:
   mlflow:
     build: ./mlflow
     container_name: mlflow
+    user: "${AIRFLOW_UID:-50000}:0"
     volumes:
       - ./airflow/mlflow_artifacts:/mlruns
     command: >
@@ -57,7 +58,7 @@ services:
       --port 5000
       --serve-artifacts
     ports:
-      - "5001:5000"
+      - "5000:5000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,6 +98,7 @@ services:
   fastapi:
     build: ./fastapi
     container_name: fastapi
+    user: "${AIRFLOW_UID:-50000}:0"
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
