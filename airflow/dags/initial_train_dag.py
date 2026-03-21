@@ -72,6 +72,7 @@ train_task = PythonOperator(
     op_kwargs={
         'data_dir': '/opt/airflow/data/v1',
         'epochs': 1,
+        'batch_size': 32,
         'experiment_name': 'ThaiFood_Initial',
         'run_name': 'initial_v1_run'
     },

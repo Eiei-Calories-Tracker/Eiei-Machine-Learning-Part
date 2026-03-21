@@ -107,6 +107,7 @@ train_task = PythonOperator(
     op_kwargs={
         'data_dir': '/opt/airflow/data/{{ ti.xcom_pull(task_ids="prepare_new_data", key="new_version") }}',
         'epochs': 1,
+        'batch_size': 32,
         'experiment_name': 'ThaiFood_Initial',
         'run_name': 'retrain_{{ ti.xcom_pull(task_ids="prepare_new_data", key="new_version") }}',
         'base_model_uri': 'models:/googlenet-thai-food/Production'
