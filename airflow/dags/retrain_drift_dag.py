@@ -62,8 +62,8 @@ def prepare_data_func(**context):
         seed=42,
     )
 
-    subprocess.run(["dvc", "add", f"data/{new_v}"], cwd="/opt/airflow", check=True)
-    subprocess.run(["dvc", "push", "-r", "s3remote"], cwd="/opt/airflow", check=True)
+    # subprocess.run(["dvc", "add", f"data/{new_v}"], cwd="/opt/airflow", check=True)
+    # subprocess.run(["dvc", "push", "-r", "s3remote"], cwd="/opt/airflow", check=True)
 
     context['ti'].xcom_push(key='new_version', value=new_v)
     context['ti'].xcom_push(key='prepare_summary', value=prepare_summary)
