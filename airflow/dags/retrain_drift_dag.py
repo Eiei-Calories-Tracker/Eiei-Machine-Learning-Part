@@ -56,6 +56,7 @@ def prepare_data_func(**context):
     prepare_summary = prepare_new_version_from_latest_with_reservoir(
         base_data_dir=base_dir,
         target_version=new_v,
+        new_data_dir="/opt/airflow/mockData",
         sample_ratio=0.7,
         train_ratio=0.8,
         val_ratio=0.1,
@@ -148,7 +149,7 @@ def restart_fastapi_container_func(**context):
 
     health_url = "http://fastapi:7860/health"
     last_error = None
-    for _ in range(30):
+    for _ in range(60):
         try:
             response = requests.get(health_url, timeout=3)
             if response.status_code == 200:

@@ -133,7 +133,7 @@ def restart_fastapi_container_func(**context):
 
     health_url = "http://fastapi:7860/health"
     last_error = None
-    for _ in range(30):
+    for _ in range(60):
         try:
             response = requests.get(health_url, timeout=3)
             if response.status_code == 200:

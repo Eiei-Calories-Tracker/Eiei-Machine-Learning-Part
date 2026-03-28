@@ -47,6 +47,7 @@ services:
   mlflow:
     build: ./mlflow
     container_name: mlflow
+    user: "50000:0"
     volumes:
       - ./airflow/mlflow_artifacts:/mlruns
     command: >
@@ -61,7 +62,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fix-permissions:
+        condition: service_completed_successfully
     restart: always
+
+  fix-permissions:
+    image: alpine
+    user: root
+    volumes:
+      - ./airflow/mlflow_artifacts:/mlruns
+    command: chmod -R 777 /mlruns
 
   airflow-init:
     <<: *airflow-common
@@ -101,6 +111,7 @@ services:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
       - ./src:/app/src
+      - ./fastapi/main.py:/app/main.py
       - ./airflow/mlflow_artifacts:/mlruns
     ports:
       - "7860:7860"

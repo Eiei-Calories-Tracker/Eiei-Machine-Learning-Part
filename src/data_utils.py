@@ -65,6 +65,7 @@ def _reservoir_sample(items, sample_size):
 def prepare_new_version_from_latest_with_reservoir(
     base_data_dir,
     target_version,
+    new_data_dir=None,
     sample_ratio=0.7,
     train_ratio=0.8,
     val_ratio=0.1,
@@ -88,6 +89,16 @@ def prepare_new_version_from_latest_with_reservoir(
             continue
         for class_name in os.listdir(split_dir):
             class_dir = os.path.join(split_dir, class_name)
+            if not os.path.isdir(class_dir):
+                continue
+            for file_name in os.listdir(class_dir):
+                if file_name.lower().endswith(valid_extensions):
+                    candidates.append((class_name, os.path.join(class_dir, file_name)))
+
+    # Also include images from new_data_dir (e.g. mockData)
+    if new_data_dir and os.path.isdir(new_data_dir):
+        for class_name in os.listdir(new_data_dir):
+            class_dir = os.path.join(new_data_dir, class_name)
             if not os.path.isdir(class_dir):
                 continue
             for file_name in os.listdir(class_dir):
