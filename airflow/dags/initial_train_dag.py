@@ -25,6 +25,10 @@ dag = DAG(
     description='Initial training DAG for GoogLeNet Thai Food Classification',
     schedule_interval=None,
     catchup=False,
+    render_template_as_native_obj=True,
+    params={
+        "batch_size": 16,
+    },
 )
 
 def _resolve_latest_test_data_dir(base_data_dir="/opt/airflow/data"):
@@ -160,6 +164,7 @@ train_task = PythonOperator(
         'experiment_name': 'ThaiFood_Initial',
         'run_name': 'initial_v1_run',
         'tracking_uri': 'http://mlflow:5000',
+        'batch_size': "{{ params.batch_size }}",
     },
     dag=dag,
 )

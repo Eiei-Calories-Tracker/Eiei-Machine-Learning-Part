@@ -28,6 +28,10 @@ dag = DAG(
     description='Retraining DAG triggered by data drift',
     schedule_interval='@weekly',
     catchup=False,
+    render_template_as_native_obj=True,
+    params={
+        "batch_size": 16,
+    },
 )
 
 def _resolve_latest_test_data_dir(base_data_dir="/opt/airflow/data"):
@@ -84,6 +88,7 @@ def train_new_version_func(**context):
         run_name=f'retrain_{new_version}',
         base_model_uri='models:/googlenet-thai-food/Production',
         tracking_uri='http://mlflow:5000',
+        batch_size=context['params']['batch_size'],
     )
     return run_id
 
