@@ -3,6 +3,7 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import mlflow
 from mlflow.tracking import MlflowClient
+from src.mlflow_metadata import build_model_version_description, init_mlflow
 
 default_args = {
     'owner': 'admin',
@@ -20,6 +21,7 @@ dag = DAG(
 )
 
 def manual_register_func(**context):
+    init_mlflow("http://mlflow:5000")
     # Try to get run_id from configuration (Trigger DAG w/ config)
     dag_run = context.get('dag_run')
     run_id = None
@@ -42,6 +44,22 @@ def manual_register_func(**context):
         # Register the model
         result = mlflow.register_model(model_uri, model_name)
         version = result.version
+
+        description = build_model_version_description(
+            {
+                "phase": "manual_registration",
+                "source_run_id": run_id,
+                "data_version": "unknown",
+                "trigger_source": "manual",
+                "dag_id": context['dag'].dag_id,
+                "task_id": context['task'].task_id,
+                "airflow_run_id": dag_run.run_id if dag_run else None,
+                "drift_triggered": False,
+                "base_model": "user-selected-run",
+                "note": "Manual registration workflow promoted supplied run_id",
+            }
+        )
+        client.update_model_version(name=model_name, version=version, description=description)
         
         # Promote to Production
         print(f"Promoting version {version} to Production stage...")

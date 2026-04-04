@@ -12,6 +12,7 @@ from src.data_utils import prepare_new_version_from_latest_with_reservoir, get_l
 from src.main_train import run_training_task
 from src.main_eval import evaluate_model_uri
 from src.drift_check_main import run_drift_check_task
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, build_model_version_description, init_mlflow
 import requests
 
 default_args = {
@@ -50,8 +51,7 @@ def check_drift_branch_func(**context):
 
 def prepare_data_func(**context):
     base_dir = "/opt/airflow/data"
-    tracking_uri = "http://mlflow:5000"
-    mlflow.set_tracking_uri(tracking_uri)
+    init_mlflow("http://mlflow:5000")
 
     latest_v = get_latest_version(base_dir)
     v_num = int(latest_v[1:]) if latest_v else 0
@@ -84,32 +84,61 @@ def train_new_version_func(**context):
     run_id = run_training_task(
         data_dir=f"/opt/airflow/data/{new_version}",
         epochs=1,
-        experiment_name='ThaiFood_Initial',
+        experiment_name=CANONICAL_EXPERIMENT_NAME,
         run_name=f'retrain_{new_version}',
         base_model_uri='models:/googlenet-thai-food/Production',
         tracking_uri='http://mlflow:5000',
         batch_size=context['params']['batch_size'],
+        phase='retrain',
+        trigger_source='airflow',
+        dag_id=context['dag'].dag_id,
+        task_id=context['task'].task_id,
+        airflow_run_id=context['dag_run'].run_id if context.get('dag_run') else None,
+        drift_triggered=True,
+        base_model='models:/googlenet-thai-food/Production',
+        data_version=new_version,
+        run_description=f"retrain with drift trigger for {new_version}",
     )
     return run_id
 
 
 def evaluate_candidate_func(**context):
     ti = context['ti']
-    mlflow.set_tracking_uri("http://mlflow:5000")
+    init_mlflow("http://mlflow:5000")
 
     run_id = ti.xcom_pull(task_ids='fine_tune_new_version', key='return_value')
     if not run_id:
         raise ValueError("Missing run_id from fine_tune_new_version")
 
     data_dir = _resolve_latest_test_data_dir()
+    latest_version = get_latest_version("/opt/airflow/data")
     candidate_uri = f"runs:/{run_id}/model"
-    _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+    mlflow.set_experiment(CANONICAL_EXPERIMENT_NAME)
+    with mlflow.start_run(run_name=f"eval_candidate_{latest_version or 'unknown'}"):
+        mlflow.set_tags(
+            {
+                "trigger_source": "airflow",
+                "dag_id": context['dag'].dag_id,
+                "task_id": context['task'].task_id,
+                "airflow_run_id": context['dag_run'].run_id if context.get('dag_run') else "unknown",
+                "phase": "evaluation",
+                "data_version": latest_version or "unknown",
+                "drift_triggered": "true",
+                "base_model": "models:/googlenet-thai-food/Production",
+                "eval_purpose": "candidate_selection",
+                "eval_split": "test",
+                "parent_training_run": run_id,
+            }
+        )
+        mlflow.set_tag("mlflow.note.content", "Evaluate drift-retrained candidate model for promotion")
+        _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+        mlflow.log_metrics({"test_acc": float(candidate_acc)})
     ti.xcom_push(key='candidate_acc', value=float(candidate_acc))
     return float(candidate_acc)
 
 def compare_and_promote_func(**context):
     ti = context['ti']
-    mlflow.set_tracking_uri("http://mlflow:5000")
+    init_mlflow("http://mlflow:5000")
 
     new_acc = float(ti.xcom_pull(task_ids='evaluate_new_version', key='candidate_acc'))
     
@@ -134,6 +163,23 @@ def compare_and_promote_func(**context):
 
     latest_run_id = ti.xcom_pull(task_ids="fine_tune_new_version", key="return_value")
     result = mlflow.register_model(f"runs:/{latest_run_id}/model", model_name)
+    description = build_model_version_description(
+        {
+            "phase": "retrain",
+            "source_run_id": latest_run_id,
+            "data_version": get_latest_version("/opt/airflow/data"),
+            "trigger_source": "airflow",
+            "dag_id": context['dag'].dag_id,
+            "task_id": context['task'].task_id,
+            "airflow_run_id": context['dag_run'].run_id if context.get('dag_run') else None,
+            "drift_triggered": True,
+            "base_model": "models:/googlenet-thai-food/Production",
+            "candidate_acc": new_acc,
+            "production_acc": prev_acc,
+            "note": "Retrain DAG promotion decision after drift branch",
+        }
+    )
+    client.update_model_version(name=model_name, version=result.version, description=description)
     client.transition_model_version_stage(model_name, result.version, "Production", archive_existing_versions=True)
     print(f"New model version {result.version} promoted to Production")
     ti.xcom_push(key='promoted', value=True)

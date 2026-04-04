@@ -1,9 +1,9 @@
 import argparse
-import os
 import torch
 import mlflow
 from src.data_utils import get_eval_loader
 from src.train_engine import evaluate
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, apply_run_metadata, infer_data_version, init_mlflow
 
 def evaluate_model_uri(data_dir, model_uri, batch_size=32, split='test', device=None):
     if device is None:
@@ -17,14 +17,31 @@ def evaluate_model_uri(data_dir, model_uri, batch_size=32, split='test', device=
     return loss, acc
 
 
-def run_eval_task(data_dir, model_uri, experiment_name="ThaiFood_Initial", run_name="eval_run", tracking_uri=None, split='test', **kwargs):
+def run_eval_task(data_dir, model_uri, experiment_name=CANONICAL_EXPERIMENT_NAME, run_name="eval_run", tracking_uri=None, split='test', **kwargs):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    resolved_tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-    mlflow.set_tracking_uri(resolved_tracking_uri)
+    init_mlflow(tracking_uri)
+    run_tags = {
+        "trigger_source": kwargs.get("trigger_source", "manual"),
+        "dag_id": kwargs.get("dag_id"),
+        "task_id": kwargs.get("task_id"),
+        "airflow_run_id": kwargs.get("airflow_run_id"),
+        "phase": kwargs.get("phase", "evaluation"),
+        "data_version": kwargs.get("data_version") or infer_data_version(data_dir),
+        "drift_triggered": kwargs.get("drift_triggered"),
+        "base_model": kwargs.get("base_model", "n/a"),
+        "eval_purpose": kwargs.get("eval_purpose", "validation"),
+        "eval_split": split,
+        "parent_training_run": kwargs.get("parent_training_run"),
+    }
+    run_description = kwargs.get(
+        "run_description",
+        f"phase=evaluation data_version={run_tags['data_version']} split={split} model_uri={model_uri}",
+    )
     
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name=run_name):
+        apply_run_metadata(tags=run_tags, description=run_description)
         loss, acc = evaluate_model_uri(data_dir=data_dir, model_uri=model_uri, batch_size=32, split=split, device=device)
         
         mlflow.log_metrics({"test_loss": loss, "test_acc": acc})
@@ -40,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--model_uri", type=str, required=True)
-    parser.add_argument("--experiment_name", type=str, default="ThaiFood_Initial")
+    parser.add_argument("--experiment_name", type=str, default=CANONICAL_EXPERIMENT_NAME)
     parser.add_argument("--run_name", type=str, default="eval_run")
     parser.add_argument("--tracking_uri", type=str, default=None)
     parser.add_argument("--split", type=str, default="test")

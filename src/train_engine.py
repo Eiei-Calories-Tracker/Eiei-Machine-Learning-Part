@@ -4,6 +4,7 @@ import mlflow
 import mlflow.pytorch
 from tqdm import tqdm
 import time
+from src.mlflow_metadata import apply_run_metadata
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -60,23 +61,41 @@ def evaluate(model, dataloader, criterion, device):
             
     return running_loss / total, correct / total
 
-def run_training(model, train_loader, val_loader, epochs, lr, device, experiment_name, run_name):
+def run_training(
+    model,
+    train_loader,
+    val_loader,
+    epochs,
+    lr,
+    device,
+    experiment_name,
+    run_name,
+    run_tags=None,
+    run_description=None,
+    extra_params=None,
+):
     # Disable autologging to prevent compatibility issues with server version
     mlflow.autolog(disable=True)
     mlflow.set_experiment(experiment_name)
     
     with mlflow.start_run(run_name=run_name) as run:
         run_id = run.info.run_id
+        apply_run_metadata(tags=run_tags, description=run_description)
         model = model.to(device)
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
-        
-        mlflow.log_params({
+
+        params_to_log = {
             "epochs": epochs,
             "lr": lr,
             "optimizer": "Adam",
-            "batch_size": train_loader.batch_size
-        })
+            "batch_size": train_loader.batch_size,
+            "train_samples": len(train_loader.dataset),
+            "val_samples": len(val_loader.dataset),
+        }
+        if extra_params:
+            params_to_log.update(extra_params)
+        mlflow.log_params(params_to_log)
         
         best_acc = 0.0
         

@@ -10,6 +10,7 @@ import docker
 from src.data_utils import get_latest_version, prepare_new_version_data
 from src.main_train import run_training_task
 from src.main_eval import evaluate_model_uri
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, build_model_version_description, init_mlflow
 
 default_args = {
     'owner': 'admin',
@@ -62,8 +63,7 @@ def preprocess_v1_func():
 
 def evaluate_candidate_func(**context):
     ti = context['ti']
-    tracking_uri = "http://mlflow:5000"
-    mlflow.set_tracking_uri(tracking_uri)
+    init_mlflow("http://mlflow:5000")
 
     run_id = ti.xcom_pull(task_ids='train_v1', key='return_value')
     if not run_id:
@@ -71,7 +71,26 @@ def evaluate_candidate_func(**context):
 
     data_dir = _resolve_latest_test_data_dir()
     candidate_uri = f"runs:/{run_id}/model"
-    _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+    mlflow.set_experiment(CANONICAL_EXPERIMENT_NAME)
+    with mlflow.start_run(run_name="eval_candidate_v1"):
+        mlflow.set_tags(
+            {
+                "trigger_source": "airflow",
+                "dag_id": context['dag'].dag_id,
+                "task_id": context['task'].task_id,
+                "airflow_run_id": context['dag_run'].run_id if context.get('dag_run') else "unknown",
+                "phase": "evaluation",
+                "data_version": "v1",
+                "drift_triggered": "false",
+                "base_model": "none",
+                "eval_purpose": "candidate_selection",
+                "eval_split": "test",
+                "parent_training_run": run_id,
+            }
+        )
+        mlflow.set_tag("mlflow.note.content", "Evaluate initial training candidate model for promotion")
+        _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+        mlflow.log_metrics({"test_acc": float(candidate_acc)})
 
     ti.xcom_push(key='candidate_acc', value=float(candidate_acc))
     return float(candidate_acc)
@@ -79,8 +98,7 @@ def evaluate_candidate_func(**context):
 
 def compare_and_promote_model_func(**context):
     ti = context['ti']
-    tracking_uri = "http://mlflow:5000"
-    mlflow.set_tracking_uri(tracking_uri)
+    init_mlflow("http://mlflow:5000")
 
     client = MlflowClient()
     model_name = "googlenet-thai-food"
@@ -108,6 +126,23 @@ def compare_and_promote_model_func(**context):
         return False
 
     result = mlflow.register_model(f"runs:/{run_id}/model", model_name)
+    description = build_model_version_description(
+        {
+            "phase": "initial_train",
+            "source_run_id": run_id,
+            "data_version": "v1",
+            "trigger_source": "airflow",
+            "dag_id": context['dag'].dag_id,
+            "task_id": context['task'].task_id,
+            "airflow_run_id": context['dag_run'].run_id if context.get('dag_run') else None,
+            "drift_triggered": False,
+            "base_model": "none",
+            "candidate_acc": candidate_acc,
+            "production_acc": production_acc,
+            "note": "Initial DAG promotion decision",
+        }
+    )
+    client.update_model_version(name=model_name, version=result.version, description=description)
     client.transition_model_version_stage(
         name=model_name,
         version=result.version,
@@ -161,10 +196,18 @@ train_task = PythonOperator(
     op_kwargs={
         'data_dir': '/opt/airflow/data/v1',
         'epochs': 1,
-        'experiment_name': 'ThaiFood_Initial',
+        'experiment_name': CANONICAL_EXPERIMENT_NAME,
         'run_name': 'initial_v1_run',
         'tracking_uri': 'http://mlflow:5000',
+        'phase': 'initial_train',
+        'trigger_source': 'airflow',
+        'dag_id': 'initial_train_dag',
+        'task_id': 'train_v1',
+        'drift_triggered': False,
+        'base_model': 'none',
+        'data_version': 'v1',
         'batch_size': "{{ params.batch_size }}",
+        'airflow_run_id': "{{ dag_run.run_id }}",
     },
     dag=dag,
 )
