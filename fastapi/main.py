@@ -114,12 +114,12 @@ async def predict(file: UploadFile = File(...)):
         
         pred_idx = torch.argmax(probs, dim=1).item()
         confidence = probs[0][pred_idx].item()
-        
+    
         threshold = 0.52
         is_confident = confidence >= threshold
         
         return {
-            "prediction": label if is_confident else "",
+            "prediction": CLASS_NAMES[pred_idx] if is_confident else "",
             "confidence": confidence,
             "class_id": pred_idx if is_confident else -1
         }
