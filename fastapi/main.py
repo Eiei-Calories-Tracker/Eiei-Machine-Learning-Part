@@ -10,6 +10,7 @@ import traceback
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import RedirectResponse
 import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,6 +32,14 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
 app = FastAPI(title="Thai Food Classification API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def load_model():
@@ -106,12 +115,13 @@ async def predict(file: UploadFile = File(...)):
         pred_idx = torch.argmax(probs, dim=1).item()
         confidence = probs[0][pred_idx].item()
         
-        label = CLASS_NAMES[pred_idx]
+        threshold = 0.52
+        is_confident = confidence >= threshold
         
         return {
-            "prediction": label,
+            "prediction": label if is_confident else "",
             "confidence": confidence,
-            "class_id": pred_idx
+            "class_id": pred_idx if is_confident else -1
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

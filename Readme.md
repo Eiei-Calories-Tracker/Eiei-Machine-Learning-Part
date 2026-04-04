@@ -114,6 +114,9 @@ python -m venv .venv
 pip install "dvc[s3]"
 pip install dotenv-cli
 dotenv -e ./secrets/.env run dvc pull
+
+pip install python-dotenv
+python -m dotenv -f secrets/.env run dvc pull
 ```
 
 # How to initalize in case add new dvc
