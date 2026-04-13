@@ -28,12 +28,13 @@ docker compose exec airflow-scheduler airflow dags trigger retrain_drift_dag
 Pipeline นี้ใช้สำหรับ train ครั้งแรก (หรือรันใหม่แบบ manual) และ promote model เข้า MLflow Registry
 
 Flow ที่เกิดขึ้น:
+
 - `preprocess_v1`: เตรียม `data/v1` จาก `mockData` (ถ้า `data/v1/train` และ `data/v1/val` มีอยู่แล้วจะ skip)
 - `train_v1`: train model และ log run/model artifact เข้า MLflow
 - `evaluate_candidate`: ประเมิน candidate model บน latest test dataset
 - `compare_and_promote`: เทียบ candidate กับ Production model ปัจจุบัน
-    - ถ้าไม่มี Production model เดิม จะ promote ได้เลย
-    - ถ้ามีอยู่แล้ว จะ promote เฉพาะเมื่อ candidate ดีกว่าหรือเท่ากับ baseline
+  - ถ้าไม่มี Production model เดิม จะ promote ได้เลย
+  - ถ้ามีอยู่แล้ว จะ promote เฉพาะเมื่อ candidate ดีกว่าหรือเท่ากับ baseline
 - `restart_fastapi`: restart FastAPI container และเช็ก `/health`
 
 ```mermaid
@@ -51,14 +52,15 @@ flowchart TD
 Pipeline นี้สำหรับ retrain อัตโนมัติแบบ scheduled โดยมี drift เป็นเงื่อนไข
 
 Flow ที่เกิดขึ้น:
+
 - `check_drift`: ตรวจ drift จาก latest version dataset เทียบกับ `mockData`
 - `drift_branch`: branch ตามผล drift
-    - ไม่เกิด drift -> `no_drift_detected` (จบ flow)
-    - เกิด drift -> ไปต่อที่ `prepare_new_data`
+  - ไม่เกิด drift -> `no_drift_detected` (จบ flow)
+  - เกิด drift -> ไปต่อที่ `prepare_new_data`
 - `prepare_new_data`:
-    - สร้าง dataset version ใหม่จาก latest data ด้วย Reservoir Sampling (70%)
-    - split ใหม่เป็น 80:10:10 (train/val/test)
-    - `dvc add` และ `dvc push -r s3remote`
+  - สร้าง dataset version ใหม่จาก latest data ด้วย Reservoir Sampling (70%)
+  - split ใหม่เป็น 80:10:10 (train/val/test)
+  - `dvc add` และ `dvc push -r s3remote`
 - `fine_tune_new_version`: finetune จาก `models:/googlenet-thai-food/Production`
 - `evaluate_new_version`: evaluate candidate model
 - `compare_and_promote`: promote เฉพาะเมื่อ candidate ดีกว่าหรือเท่ากับ Production
@@ -183,17 +185,19 @@ Th food 50
 
 ```
 data/
- ├── test_fixed/
+ ├── test/
  │    └── BitterMelon/
  │
  ├── v1/
  │    ├── train/
  │    			└── BitterMelon/
  │    └── val/
+ │    └── test/
  │
  └── v2/
       ├── train/
       └── val/
+      └── test/
 ```
 
 Th food 100

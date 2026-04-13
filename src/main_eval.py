@@ -13,8 +13,8 @@ def evaluate_model_uri(data_dir, model_uri, batch_size=32, split='test', device=
     model.to(device)
     eval_loader = get_eval_loader(data_dir, batch_size=batch_size, split=split)
     criterion = torch.nn.CrossEntropyLoss()
-    loss, acc = evaluate(model, eval_loader, criterion, device)
-    return loss, acc
+    metrics = evaluate(model, eval_loader, criterion, device)
+    return metrics
 
 
 def run_eval_task(data_dir, model_uri, experiment_name=CANONICAL_EXPERIMENT_NAME, run_name="eval_run", tracking_uri=None, split='test', **kwargs):
@@ -42,9 +42,16 @@ def run_eval_task(data_dir, model_uri, experiment_name=CANONICAL_EXPERIMENT_NAME
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name=run_name):
         apply_run_metadata(tags=run_tags, description=run_description)
-        loss, acc = evaluate_model_uri(data_dir=data_dir, model_uri=model_uri, batch_size=32, split=split, device=device)
+        metrics = evaluate_model_uri(data_dir=data_dir, model_uri=model_uri, batch_size=32, split=split, device=device)
         
-        mlflow.log_metrics({"test_loss": loss, "test_acc": acc})
+        mlflow.log_metrics({
+            f"{split}_loss": metrics["loss"],
+            f"{split}_acc": metrics["acc"],
+            f"{split}_f1_macro": metrics["f1_macro"],
+            f"{split}_recall_macro": metrics["recall_macro"],
+            f"{split}_roc_auc_macro": metrics["roc_auc_macro"]
+        })
+        acc = metrics["acc"]
         print(f"Evaluation Acc: {acc:.4f}")
         
         # Write accuracy to file for Airflow to read

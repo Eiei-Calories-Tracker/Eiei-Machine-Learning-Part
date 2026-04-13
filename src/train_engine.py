@@ -5,6 +5,8 @@ import mlflow.pytorch
 from tqdm import tqdm
 import time
 from src.mlflow_metadata import apply_run_metadata
+from sklearn.metrics import f1_score, recall_score, roc_auc_score
+import numpy as np
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device):
     model.train()
@@ -48,6 +50,10 @@ def evaluate(model, dataloader, criterion, device):
     correct = 0
     total = 0
     
+    all_labels = []
+    all_preds = []
+    all_probs = []
+
     with torch.no_grad():
         for inputs, labels in tqdm(dataloader, desc="Evaluating"):
             inputs, labels = inputs.to(device), labels.to(device)
@@ -55,11 +61,39 @@ def evaluate(model, dataloader, criterion, device):
             loss = criterion(outputs, labels)
             
             running_loss += loss.item() * inputs.size(0)
+            
+            # For metrics
+            probs = torch.softmax(outputs, dim=1)
             _, predicted = outputs.max(1)
+            
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
             
-    return running_loss / total, correct / total
+            all_labels.extend(labels.cpu().numpy())
+            all_preds.extend(predicted.cpu().numpy())
+            all_probs.extend(probs.cpu().numpy())
+            
+    avg_loss = running_loss / total
+    avg_acc = correct / total
+    
+    # Calculate advanced metrics
+    f1_macro = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+    recall_macro = recall_score(all_labels, all_preds, average='macro', zero_division=0)
+    
+    try:
+        # One-vs-Rest for multi-class ROC AUC
+        roc_auc_macro = roc_auc_score(all_labels, all_probs, average='macro', multi_class='ovr')
+    except Exception as e:
+        print(f"ROC AUC calculation failed (likely too few samples for some classes): {e}")
+        roc_auc_macro = 0.0
+
+    return {
+        "loss": avg_loss,
+        "acc": avg_acc,
+        "f1_macro": f1_macro,
+        "recall_macro": recall_macro,
+        "roc_auc_macro": roc_auc_macro
+    }
 
 def run_training(
     model,
@@ -101,13 +135,19 @@ def run_training(
         
         for epoch in range(epochs):
             train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
-            val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+            metrics = evaluate(model, val_loader, criterion, device)
+            
+            val_loss = metrics["loss"]
+            val_acc = metrics["acc"]
             
             mlflow.log_metrics({
                 "train_loss": train_loss,
                 "train_acc": train_acc,
                 "val_loss": val_loss,
-                "val_acc": val_acc
+                "val_acc": val_acc,
+                "val_f1_macro": metrics["f1_macro"],
+                "val_recall_macro": metrics["recall_macro"],
+                "val_roc_auc_macro": metrics["roc_auc_macro"]
             }, step=epoch)
             
             print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}")

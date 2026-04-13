@@ -131,8 +131,14 @@ def evaluate_candidate_func(**context):
             }
         )
         mlflow.set_tag("mlflow.note.content", "Evaluate drift-retrained candidate model for promotion")
-        _, candidate_acc = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
-        mlflow.log_metrics({"test_acc": float(candidate_acc)})
+        metrics = evaluate_model_uri(data_dir=data_dir, model_uri=candidate_uri, split='test')
+        candidate_acc = metrics["acc"]
+        mlflow.log_metrics({
+            "test_acc": float(candidate_acc),
+            "test_f1_macro": float(metrics["f1_macro"]),
+            "test_recall_macro": float(metrics["recall_macro"]),
+            "test_roc_auc_macro": float(metrics["roc_auc_macro"])
+        })
     ti.xcom_push(key='candidate_acc', value=float(candidate_acc))
     return float(candidate_acc)
 
@@ -151,7 +157,19 @@ def compare_and_promote_func(**context):
     try:
         prod_versions = client.get_latest_versions(model_name, stages=["Production"])
         if prod_versions:
-            _, prev_acc = evaluate_model_uri(data_dir=data_dir, model_uri=f"models:/{model_name}/Production", split='test')
+            metrics = evaluate_model_uri(data_dir=data_dir, model_uri=f"models:/{model_name}/Production", split='test')
+            prev_acc = metrics["acc"]
+            
+            # Log for comparison view
+            with mlflow.start_run(run_name="promotion_comparison", nested=True):
+                mlflow.log_metrics({
+                    "candidate_test_acc": new_acc,
+                    "production_test_acc": prev_acc,
+                    "prod_f1": metrics["f1_macro"],
+                    "prod_recall": metrics["recall_macro"],
+                    "prod_roc_auc": metrics["roc_auc_macro"]
+                })
+                
             should_promote = new_acc >= prev_acc
     except Exception as error:
         print(f"No active Production baseline for comparison: {error}")

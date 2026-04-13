@@ -57,6 +57,8 @@ services:
       --host 0.0.0.0 
       --port 5000
       --serve-artifacts
+    environment:
+      - UMASK=000
     ports:
       - "5000:5000"
     depends_on:
@@ -71,7 +73,7 @@ services:
     user: root
     volumes:
       - ./airflow/mlflow_artifacts:/mlruns
-    command: chmod -R 777 /mlruns
+    command: sh -c "chown -R 50000:0 /mlruns && chmod -R 777 /mlruns"
 
   airflow-init:
     <<: *airflow-common
