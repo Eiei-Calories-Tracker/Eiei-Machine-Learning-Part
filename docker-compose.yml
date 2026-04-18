@@ -53,7 +53,7 @@ services:
     command: >
       mlflow server 
       --backend-store-uri postgresql://airflow:airflow@postgres:5432/mlflow 
-      --default-artifact-root /mlruns 
+      --default-artifact-root mlflow-artifacts:/
       --host 0.0.0.0 
       --port 5000
       --serve-artifacts

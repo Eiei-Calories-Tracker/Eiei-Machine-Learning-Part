@@ -3,9 +3,10 @@ import torch
 import mlflow
 from src.data_utils import get_eval_loader
 from src.train_engine import evaluate
-from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, apply_run_metadata, infer_data_version, init_mlflow
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, apply_run_metadata, infer_data_version, init_mlflow, set_seed
 
 def evaluate_model_uri(data_dir, model_uri, batch_size=32, split='test', device=None):
+    set_seed(42)  # Ensure reproducibility
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

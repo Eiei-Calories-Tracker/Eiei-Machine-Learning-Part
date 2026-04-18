@@ -1,4 +1,7 @@
 import os
+import random
+import numpy as np
+import torch
 from datetime import datetime, timezone
 
 import mlflow
@@ -12,6 +15,30 @@ def init_mlflow(tracking_uri=None):
     resolved_tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI)
     mlflow.set_tracking_uri(resolved_tracking_uri)
     return resolved_tracking_uri
+
+
+def safe_set_experiment(experiment_name):
+    """Set experiment by name, creating it if it doesn't exist, safely handling race conditions."""
+    try:
+        exp = mlflow.get_experiment_by_name(experiment_name)
+        if exp is None:
+            mlflow.create_experiment(experiment_name)
+        mlflow.set_experiment(experiment_name)
+    except Exception:
+        # If creation fails due to race condition, setting it should work now
+        mlflow.set_experiment(experiment_name)
+
+
+def set_seed(seed=42):
+    """Set seeds for reproducibility across random, numpy, and torch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior for some torch operations
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"Random seed set to: {seed}")
 
 
 def _normalize_scalar(value):

@@ -4,9 +4,10 @@ import mlflow
 from src.model import create_model
 from src.data_utils import get_dataloaders
 from src.train_engine import run_training
-from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, infer_data_version, init_mlflow
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, infer_data_version, init_mlflow, set_seed
 
 def run_training_task(data_dir, epochs=1, lr=0.0005, batch_size=16, experiment_name=CANONICAL_EXPERIMENT_NAME, run_name="train_run", base_model_uri=None, tracking_uri=None, **kwargs):
+    set_seed(42)  # Ensure reproducibility
     batch_size = int(batch_size)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

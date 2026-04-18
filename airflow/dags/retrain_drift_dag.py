@@ -1,6 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
 import os
 import subprocess
@@ -230,12 +231,19 @@ def restart_fastapi_container_func(**context):
 
     raise RuntimeError(f"FastAPI did not become healthy after restart. Last error: {last_error}")
 
+fix_perms_task = BashOperator(
+    task_id='fix_mlruns_permission',
+    bash_command='chmod -R 777 /mlruns || true',
+    dag=dag,
+)
+
 drift_check_task = PythonOperator(
     task_id='check_drift',
     python_callable=run_drift_check_task,
     op_kwargs={
         'base_data_dir': '/opt/airflow/data',
-        'mock_data_dir': '/opt/airflow/mockData'
+        'mock_data_dir': '/opt/airflow/mockData',
+        'model_uri': 'models:/googlenet-thai-food/Production'
     },
     dag=dag,
 )
@@ -283,3 +291,9 @@ reload_task = PythonOperator(
 
 drift_check_task >> branch_task >> [no_drift_task, prepare_data_task]
 prepare_data_task >> train_task >> eval_task >> compare_promote_task >> reload_task
+
+# Ensure permissions are fixed before tasks that load or save models
+fix_perms_task >> drift_check_task
+fix_perms_task >> train_task
+fix_perms_task >> eval_task
+fix_perms_task >> compare_promote_task

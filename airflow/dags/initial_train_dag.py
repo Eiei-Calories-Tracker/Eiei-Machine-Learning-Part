@@ -1,5 +1,6 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
 import time
 import os
@@ -10,7 +11,7 @@ import docker
 from src.data_utils import get_latest_version, prepare_new_version_data
 from src.main_train import run_training_task
 from src.main_eval import evaluate_model_uri
-from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, build_model_version_description, init_mlflow
+from src.mlflow_metadata import CANONICAL_EXPERIMENT_NAME, build_model_version_description, init_mlflow, safe_set_experiment
 
 default_args = {
     'owner': 'admin',
@@ -71,7 +72,7 @@ def evaluate_candidate_func(**context):
 
     data_dir = _resolve_latest_test_data_dir()
     candidate_uri = f"runs:/{run_id}/model"
-    mlflow.set_experiment(CANONICAL_EXPERIMENT_NAME)
+    safe_set_experiment(CANONICAL_EXPERIMENT_NAME)
     with mlflow.start_run(run_name="eval_candidate_v1"):
         mlflow.set_tags(
             {
@@ -202,6 +203,12 @@ def restart_fastapi_container_func(**context):
 
     raise RuntimeError(f"FastAPI did not become healthy after restart. Last error: {last_error}")
 
+fix_perms_task = BashOperator(
+    task_id='fix_mlruns_permission',
+    bash_command='chmod -R 777 /mlruns || true',
+    dag=dag,
+)
+
 preprocess_task = PythonOperator(
     task_id='preprocess_v1',
     python_callable=preprocess_v1_func,
@@ -248,4 +255,8 @@ restart_fastapi_task = PythonOperator(
     dag=dag,
 )
 
-preprocess_task >> train_task >> evaluate_candidate_task >> compare_promote_task >> restart_fastapi_task
+fix_perms_task >> preprocess_task >> train_task >> evaluate_candidate_task >> compare_promote_task >> restart_fastapi_task
+# Also ensure permissions are fixed before tasks that load or save models
+fix_perms_task >> train_task
+fix_perms_task >> evaluate_candidate_task
+fix_perms_task >> compare_promote_task

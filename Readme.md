@@ -185,7 +185,7 @@ Th food 50
 
 ```
 data/
- ├── test/
+ ├── test/ (No longer use)
  │    └── BitterMelon/
  │
  ├── v1/
