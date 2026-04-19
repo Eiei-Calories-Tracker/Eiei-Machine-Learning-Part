@@ -1,4 +1,4 @@
-test*/
+*.zip
 v*/
-/test
-/prepareV1.zip
+!*.dvc
+/v1

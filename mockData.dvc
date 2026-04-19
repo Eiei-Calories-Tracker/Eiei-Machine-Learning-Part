@@ -1,6 +1,6 @@
 outs:
-- md5: d751713988987e9331980363e24189ce.dir
-  size: 0
-  nfiles: 0
+- md5: 09eec1df9583485c9994b4e9608e6ad2.dir
+  size: 166108575
+  nfiles: 1160
   hash: md5
   path: mockData

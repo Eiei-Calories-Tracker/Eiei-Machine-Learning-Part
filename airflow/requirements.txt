@@ -1,0 +1,12 @@
+mlflow==2.10.2
+alibi-detect
+pandas
+matplotlib
+seaborn
+tqdm
+Pillow
+psycopg2-binary
+scikit-learn
+requests
+dvc[s3]
+docker

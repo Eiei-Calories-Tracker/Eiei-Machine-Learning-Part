@@ -3,5 +3,11 @@ secrets/*.json
 data/test*/
 data/v*/
 .env
-venv
-/mockData
+*venv
+*mockData
+**/logs
+**logs
+**/mlflow_artifacts
+**/__pycache__
+**/postgres_data
+secrets/.env
